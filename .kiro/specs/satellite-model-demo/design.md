@@ -4,11 +4,13 @@
 
 This demo shows how to train a satellite-imagery model on Amazon SageMaker from inside SageMaker JupyterLab, with Kiro assisting along the way. It is framed around a generic conservation use case: classifying satellite tiles into four land cover / land use categories — forest, water, cropland, and urban — as a way to track habitat and land change over time.
 
-The design favors clarity over accuracy and production-readiness. The entire experience is one guided notebook that narrates a continuous story and orchestrates the workflow: prepare a small subset of the public EuroSAT dataset, stage it in S3, launch a SageMaker managed training job using the PyTorch estimator, and report where the trained model landed. The model itself is a small custom PyTorch CNN trained from scratch, defined in a standalone `train.py` so a reader can see and adapt exactly what is being trained.
+The design favors clarity over accuracy and production-readiness. The entire experience is one guided notebook that narrates a continuous story and orchestrates the workflow: prepare a small subset of the public EuroSAT dataset, stage it in S3, launch a SageMaker managed training job using the SageMaker SDK v3 `ModelTrainer`, and report where the trained model landed. The model itself is a small custom PyTorch CNN trained from scratch, defined in a standalone `train.py` so a reader can see and adapt exactly what is being trained.
+
+> **SDK note:** This notebook targets the SageMaker Python SDK **v3**. SDK v3 removed the v2 `sagemaker.pytorch.PyTorch` estimator; managed training is launched with `sagemaker.train.ModelTrainer` instead.
 
 Two design principles run throughout:
 
-- **Managed training, not in-notebook training.** The notebook never trains the model in its own process. It configures an estimator and calls `fit()`, so training runs on managed infrastructure. This mirrors real SageMaker workflows and keeps the notebook fast and light.
+- **Managed training, not in-notebook training.** The notebook never trains the model in its own process. It configures a `ModelTrainer` and calls `train()`, so training runs on managed infrastructure. This mirrors real SageMaker workflows and keeps the notebook fast and light.
 - **Minimal, well-explained setup.** The notebook uses SageMaker's default execution-role resolution and default bucket, a single dependency file, and the smallest set of dependencies that gets the job done. Every AWS resource or permission is named and justified in plain language before it is used.
 
 ## File Structure
@@ -24,22 +26,22 @@ satellite-model-demo/
 
 | File | Role | Requirements |
 |------|------|--------------|
-| `satellite_land_cover_demo.ipynb` | The one notebook that narrates the story and orchestrates every step: setup → data prep → sample preview → S3 upload → estimator config → `fit()` → report artifact location → load model → prediction grid. | 1.1, 1.2, 1.3, 1.5, 6.1, 6.2, 7.1, 7.2, 7.3 |
+| `satellite_land_cover_demo.ipynb` | The one notebook that narrates the story and orchestrates every step: setup → data prep → sample preview → S3 upload → `ModelTrainer` config → `train()` → report artifact location → load model → prediction grid. | 1.1, 1.2, 1.3, 1.5, 6.1, 6.2, 7.1, 7.2, 7.3 |
 | `train.py` | The training entry point run by the managed training job. Defines the CNN, reads the input channel, trains, and saves the artifact. | 3.1, 3.2, 3.3, 3.4, 3.5, 3.6 |
 | `requirements.txt` | The single place dependencies are declared. | 5.4, 5.5 |
 
 ### Dependency specification (`requirements.txt`)
 
-Dependencies are limited to what is needed to prepare data, launch the training job, and run the training script. The notebook environment needs the SageMaker SDK and the tools to download and subset EuroSAT; the training container already ships PyTorch, so `train.py` relies on the framework version the estimator selects.
+Dependencies are limited to what is needed to prepare data, launch the training job, and run the training script. The notebook environment needs the SageMaker SDK and the tools to download and subset EuroSAT; the training container already ships PyTorch, so `train.py` relies on the framework version the training image selects. The notebook targets **SageMaker SDK v3**, so the dependency is pinned to `sagemaker>=3`.
 
 ```
-sagemaker>=2.200
+sagemaker>=3
 torch
 torchvision
 matplotlib
 ```
 
-- `sagemaker` — configure the estimator, resolve role/bucket, launch and monitor the training job.
+- `sagemaker` — configure the `ModelTrainer` (SDK v3), resolve role/bucket, launch and monitor the training job.
 - `torchvision` — download EuroSAT and read images (torchvision provides a built-in EuroSAT dataset and image transforms).
 - `torch` — used by both the local prep step (tensors/transforms) and the training script.
 - `matplotlib` — draw the two in-notebook visualizations: the sample-tiles grid before training and the predicted-vs-actual grid after training.
@@ -57,11 +59,11 @@ flowchart TD
     C --> D[Report images per class]
     D --> P[Preview sample tiles grid<br/>images + class labels]
     P --> E[Upload subset to S3<br/>input channel prefix]
-    E --> F[Configure PyTorch estimator<br/>entry_point=train.py]
-    F --> G[estimator.fit input=S3 prefix<br/>managed Training Job]
+    E --> F[Configure ModelTrainer SDK v3<br/>entry_script=train.py]
+    F --> G[model_trainer.train input=S3 channel<br/>managed Training Job]
     G --> H{Job status}
-    H -->|Completed| I[Report model artifact S3 URI]
-    H -->|Failed| J[Surface SageMaker failure reason]
+    H -->|Completed| I[Report model artifact S3 URI<br/>via describe_training_job]
+    H -->|Failed| J[Surface SageMaker failure reason<br/>via describe_training_job]
     I --> K[Load model.tar.gz into notebook<br/>rebuild SmallCNN + load state_dict]
     K --> L[Infer on held-out tiles<br/>show predicted-vs-actual grid]
 ```
@@ -69,16 +71,16 @@ flowchart TD
 ### Notebook sections (cell-by-cell narrative)
 
 1. **The story.** Introduce the conservation framing: land cover / land use classification helps track habitat and land change over time. Explain the four classes and why satellite tiles are a natural signal. (1.3, 6.2)
-2. **Where Kiro helps.** A short note calling out where Kiro assists inside SageMaker JupyterLab — generating the training script, wiring the estimator, and explaining SageMaker concepts. (6.1)
+2. **Where Kiro helps.** A short note calling out where Kiro assists inside SageMaker JupyterLab — generating the training script, wiring the `ModelTrainer`, and explaining SageMaker concepts. (6.1)
 3. **SageMaker setup.** Create a `sagemaker.Session`, resolve the execution role via default resolution, and pick the default bucket. Narrate why a role and a bucket are required. (5.1, 5.2, 5.3)
 4. **Prepare the dataset subset.** Download EuroSAT via torchvision, select only the categories mapped to the four target classes, and cap the number of images per class to keep the footprint small and training fast. (2.1, 2.2, 2.3)
 5. **Report per-class counts.** Print the number of images prepared per class so the user sees the subset composition. (2.5)
 6. **Preview sample tiles (before training).** Draw a small matplotlib grid of tiles sampled from the local subset — a few per target class — each annotated with its class label (forest, water, cropland, urban). This shows the audience what the model learns from. Pure notebook cell on already-local images; it does not touch the training job. (7.1)
 7. **Upload to S3.** Upload the prepared subset to the default bucket under a demo prefix; this becomes the training job's input channel. (2.4)
-8. **Configure the estimator.** Build a `PyTorch` estimator with `entry_point="train.py"`, small hyperparameters, and a small instance type. Narrate each key argument. (4.1, 4.4)
-9. **Launch the training job.** Call `fit()` with the S3 input channel. Emphasize that training runs on managed infrastructure, not in the notebook. (4.2, 4.3)
-10. **Report results.** On success, print `estimator.model_data` (the artifact S3 URI). On failure, surface the SageMaker failure reason. (4.5, 4.6)
-11. **Load the trained model back into the notebook (after training).** Download the `model.tar.gz` artifact from `estimator.model_data`, extract `model.pth`, reconstruct `SmallCNN(num_classes=4)`, and load the saved `state_dict`. Narrate that this brings the managed job's result back locally purely for visualization. (7.2)
+8. **Configure the ModelTrainer.** Retrieve a managed PyTorch training image with `image_uris.retrieve`, build a `SourceCode` (entry script `train.py`) and `Compute` (small instance type), and construct a `ModelTrainer` with small hyperparameters. Narrate each key piece. (4.1, 4.4)
+9. **Launch the training job.** Call `model_trainer.train()` with an `InputData` channel named `training`. Emphasize that training runs on managed infrastructure, not in the notebook. (4.2, 4.3)
+10. **Report results.** On success, read the artifact S3 URI from `describe_training_job(...)["ModelArtifacts"]["S3ModelArtifacts"]`. On failure, surface the SageMaker failure reason. (4.5, 4.6)
+11. **Load the trained model back into the notebook (after training).** Download the `model.tar.gz` artifact from the artifact URI obtained via `describe_training_job`, extract `model.pth`, reconstruct `SmallCNN(num_classes=4)`, and load the saved `state_dict`. Narrate that this brings the managed job's result back locally purely for visualization. (7.2)
 12. **Show predicted-vs-actual grid.** Run the loaded model in eval mode on a small held-out set of tiles (set aside during prep, not uploaded for training), then draw a matplotlib grid annotating each tile with its predicted and actual label. This is the visible "it works" payoff. (7.3)
 
 ## Data Preparation & Subset Flow
@@ -145,11 +147,11 @@ s3://<default-bucket>/
 │       └── urban/ ...
 └── <training-job-name>/
     └── output/
-        └── model.tar.gz             # produced Model artifact (estimator.model_data)
+        └── model.tar.gz             # produced Model artifact (ModelArtifacts.S3ModelArtifacts)
 ```
 
-- **Input channel:** the estimator's `fit({"training": "s3://<bucket>/satellite-land-cover-demo/data"})` points the managed job at the uploaded subset.
-- **Output:** SageMaker packages the contents of the training container's model directory into `model.tar.gz` and reports its location via `estimator.model_data`.
+- **Input channel:** the `ModelTrainer`'s `train(input_data_config=[InputData(channel_name="training", data_source="s3://<bucket>/satellite-land-cover-demo/data")])` points the managed job at the uploaded subset.
+- **Output:** SageMaker packages the contents of the training container's model directory into `model.tar.gz`; its location is read from the training job description at `ModelArtifacts.S3ModelArtifacts`.
 
 ## CNN Architecture (High Level)
 
@@ -173,7 +175,7 @@ This is deliberately simple. The goal is a working end-to-end run, not accuracy.
 
 ## Training Script (`train.py`) Interface
 
-`train.py` is the estimator entry point. It follows SageMaker's conventions for input and output locations and reads hyperparameters from the command line.
+`train.py` is the `ModelTrainer` entry script (`SourceCode.entry_script`). It follows SageMaker's conventions for input and output locations and reads hyperparameters from the command line.
 
 ### Command-line arguments
 
@@ -199,48 +201,90 @@ def main():
 
 On completion the script writes the model to `--model-dir`, which SageMaker collects into `model.tar.gz`.
 
-## Estimator Configuration
+## Training Job Configuration (SageMaker SDK v3 ModelTrainer)
 
-The notebook configures a `sagemaker.pytorch.PyTorch` estimator and launches the job with `fit()`.
+SageMaker SDK v3 removed the v2 `sagemaker.pytorch.PyTorch` estimator. The notebook instead retrieves a managed PyTorch training image, describes the code and compute, and launches the job with `ModelTrainer.train()`.
 
 ```python
-from sagemaker.pytorch import PyTorch
+from sagemaker.train import ModelTrainer
+from sagemaker.train.configs import SourceCode, Compute, InputData, OutputDataConfig
+from sagemaker.core import image_uris
+from sagemaker.core.helper.session_helper import Session, get_execution_role
 
-estimator = PyTorch(
-    entry_point="train.py",            # 4.1
-    source_dir=".",                    # ships train.py (and requirements.txt if used)
-    role=role,                         # default-resolved execution role (5.1)
-    instance_type="ml.m5.large",       # small; CPU is fine for a tiny model/subset
-    instance_count=1,
-    framework_version="2.2",           # pins the managed PyTorch container
+session = Session()                       # ModelTrainer can also create its own Session
+region = session.boto_region_name
+instance_type = "ml.m5.large"             # small; CPU is fine for a tiny model/subset
+
+# Resolve the managed PyTorch training container image (4.1)
+training_image = image_uris.retrieve(
+    framework="pytorch",
+    region=region,
+    version="2.2",                        # framework_version
     py_version="py310",
-    hyperparameters={                  # sized to keep the job short (4.4)
+    instance_type=instance_type,
+    image_scope="training",
+)
+
+source_code = SourceCode(
+    source_dir=".",                       # ships train.py (and requirements.txt)
+    entry_script="train.py",              # 4.1
+)
+
+compute = Compute(
+    instance_type=instance_type,
+    instance_count=1,
+)
+
+model_trainer = ModelTrainer(
+    training_image=training_image,
+    role=get_execution_role(),            # ModelTrainer defaults the execution role if omitted (5.1)
+    source_code=source_code,
+    compute=compute,
+    hyperparameters={                     # sized to keep the job short (4.4)
         "epochs": 3,
         "batch-size": 32,
     },
-    output_path=f"s3://{bucket}/",     # where model.tar.gz is written
+    output_data_config=OutputDataConfig(  # optional; where model.tar.gz is written
+        s3_output_path=f"s3://{bucket}/",
+    ),
 )
 
-estimator.fit({"training": s3_data_uri})   # managed job, S3 input channel (4.2, 4.3)
+# Launch the managed job with a named S3 input channel (4.2, 4.3)
+model_trainer.train(
+    input_data_config=[
+        InputData(channel_name="training", data_source=s3_data_uri),
+    ]
+)
 ```
+
+`ModelTrainer` defaults the execution role and can create its own `Session`, so both are optional; the notebook resolves them explicitly for narration. The input channel name `training` is what surfaces as `SM_CHANNEL_TRAINING` inside `train.py`.
 
 ### Result reporting
 
-```python
-# On success (4.5)
-print("Model artifact:", estimator.model_data)
+After `train()`, the training job handle is available at `model_trainer._latest_training_job`. Its name is used to describe the job via a boto3 SageMaker client. The v2 `estimator.model_data` attribute no longer applies — both the artifact location and the failure reason are read from the training job description.
 
-# On failure (4.6)
-# fit() raises; catch it and surface the SageMaker failure reason
+```python
+import boto3
+
+sm = boto3.client("sagemaker")
+job_name = model_trainer._latest_training_job.training_job_name
+
 try:
-    estimator.fit({"training": s3_data_uri})
-    print("Model artifact:", estimator.model_data)
+    model_trainer.train(
+        input_data_config=[InputData(channel_name="training", data_source=s3_data_uri)]
+    )
+    desc = sm.describe_training_job(TrainingJobName=job_name)
+    # On success (4.5)
+    model_data_uri = desc["ModelArtifacts"]["S3ModelArtifacts"]
+    print("Model artifact:", model_data_uri)
 except Exception:
-    reason = describe_training_job(estimator.latest_training_job.name)["FailureReason"]
+    # On failure (4.6)
+    desc = sm.describe_training_job(TrainingJobName=job_name)
+    reason = reporting.extract_failure_reason(desc)   # reads desc["FailureReason"]
     print("Training job failed:", reason)
 ```
 
-The notebook reads the failure reason from the training job description (`FailureReason`) so the user sees why a job failed rather than a bare traceback.
+The notebook reads the failure reason from the training job description (`FailureReason`) via the `reporting.extract_failure_reason` helper, so the user sees why a job failed rather than a bare traceback.
 
 ## Visualization (In-Notebook)
 
@@ -272,7 +316,7 @@ def show_sample_grid(samples):            # samples: list of (image, label)
 
 ### Load the trained artifact (after training)
 
-The trained model is brought back into the notebook for inference: download `model.tar.gz` from `estimator.model_data`, extract `model.pth`, rebuild the same `SmallCNN`, and load the saved weights.
+The trained model is brought back into the notebook for inference: download `model.tar.gz` from the artifact URI obtained via `describe_training_job` (`ModelArtifacts.S3ModelArtifacts`, not the removed `estimator.model_data`), extract `model.pth`, rebuild the same `SmallCNN`, and load the saved weights. The download is still performed by an injected `download_fn`, which may use SageMaker's S3 download utilities if available in SDK v3 or fall back to a boto3 `s3` download in the notebook. The `viz.load_trained_model(model_data_uri, download_fn)` signature is unchanged.
 
 ```python
 import tarfile, torch
@@ -313,7 +357,7 @@ def show_prediction_grid(model, held_out, to_tensor):
 
 | Scenario | Handling | Requirement |
 |----------|----------|-------------|
-| Training job fails on managed infra | Catch the exception from `fit()`, read `FailureReason` from the job description, and print it. | 4.6 |
+| Training job fails on managed infra | Catch the exception from `train()`, read `FailureReason` from the job description, and print it. | 4.6 |
 | Execution role cannot be resolved | Default resolution is used; if it fails, the notebook narrates that a SageMaker execution role is required and why. | 5.1, 5.3 |
 | No bucket specified | Fall back to the SageMaker default bucket. | 5.2 |
 | EuroSAT download interrupted | torchvision retries/caches; re-running the cell resumes. The linear cell order means a re-run is safe. | 1.5 |
@@ -377,7 +421,7 @@ The demo prioritizes clarity, but the testable logic (subset preparation, the mo
 **Integration / smoke tests** (single or few executions, not property-based — these exercise AWS and infrastructure wiring):
 - End-to-end run in JupyterLab with only the declared dependencies (Requirements 1.5, 6.3).
 - Upload subset to S3 and confirm objects exist at the expected prefix (Requirement 2.4).
-- Estimator launches a managed training job with `train.py` as entry point and the S3 input channel (Requirements 4.1, 4.2, 4.3), and `estimator.model_data` reports the artifact URI (Requirement 4.5).
+- `ModelTrainer` launches a managed training job with `train.py` as the entry script and the `training` S3 input channel (Requirements 4.1, 4.2, 4.3), and `describe_training_job(...)["ModelArtifacts"]["S3ModelArtifacts"]` reports the artifact URI (Requirement 4.5).
 - `train.py` reads `SM_CHANNEL_TRAINING` and writes an artifact to `SM_MODEL_DIR` (Requirements 3.4, 3.5).
 - Role/bucket resolution uses defaults (Requirements 5.1, 5.2).
 

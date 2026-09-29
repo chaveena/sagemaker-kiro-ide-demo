@@ -183,6 +183,15 @@ def load_eurosat_source(root="./eurosat_data"):
     def source(source_category_name):
         if cache["by_category"] is None:
             cache["by_category"] = _build_index()
-        return cache["by_category"].get(source_category_name, [])
+        by_category = cache["by_category"]
+        if source_category_name not in by_category:
+            # Fail loudly rather than silently returning an empty class, which
+            # would otherwise surface much later as a confusing 0-image class.
+            available = ", ".join(sorted(by_category))
+            raise KeyError(
+                f"EuroSAT category {source_category_name!r} not found. "
+                f"Available categories: {available}"
+            )
+        return by_category[source_category_name]
 
     return source
