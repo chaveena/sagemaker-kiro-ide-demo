@@ -10,7 +10,57 @@ data loading, the training loop, and artifact saving) are added in later tasks
 and are intentionally not implemented here.
 """
 
+import argparse
+import os
+
 import torch.nn as nn
+
+
+def parse_args(argv=None):
+    """Parse command-line arguments for the training entry point.
+
+    SageMaker passes hyperparameters as CLI arguments and sets the
+    ``SM_CHANNEL_TRAINING`` and ``SM_MODEL_DIR`` environment variables, which
+    are used as defaults for ``--data-dir`` and ``--model-dir`` respectively so
+    the managed training environment is honored automatically.
+
+    Args:
+        argv: Optional list of argument strings. When ``None`` (the default),
+            arguments are read from ``sys.argv``. Passing an explicit list makes
+            the parser easy to exercise from tests.
+
+    Returns:
+        argparse.Namespace with ``epochs``, ``batch_size``, ``data_dir``, and
+        ``model_dir`` attributes.
+    """
+    parser = argparse.ArgumentParser(
+        description="Train a small CNN on satellite tiles."
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=3,
+        help="Number of training epochs.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Mini-batch size.",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default=os.environ.get("SM_CHANNEL_TRAINING"),
+        help="Input data path (defaults to the SM_CHANNEL_TRAINING env var).",
+    )
+    parser.add_argument(
+        "--model-dir",
+        type=str,
+        default=os.environ.get("SM_MODEL_DIR"),
+        help="Model output path (defaults to the SM_MODEL_DIR env var).",
+    )
+    return parser.parse_args(argv)
 
 
 class SmallCNN(nn.Module):
