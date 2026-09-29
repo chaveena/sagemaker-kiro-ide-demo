@@ -1,0 +1,4 @@
+sagemaker>=2.200
+torch
+torchvision
+matplotlib
