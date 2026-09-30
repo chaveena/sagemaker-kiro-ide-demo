@@ -22,9 +22,15 @@ import tarfile
 
 import torch
 
-# Re-expose the target classes from data_prep so the label domain is defined in
-# exactly one place. Importing data_prep does not require network access.
+# The four target classes the label domain is drawn from.
 from data_prep import TARGET_CLASSES
+
+# The order in which the trained model emits its logits. The training job uses
+# torchvision's ImageFolder, which assigns class indices by SORTING the class
+# directory names alphabetically -- NOT the TARGET_CLASSES order. Inference must
+# map argmax back to a label using this same sorted order, otherwise every
+# prediction is silently mislabeled (a permutation of the true labels).
+MODEL_INDEX_TO_LABEL = sorted(TARGET_CLASSES)
 
 # Import the model architecture from the training entry point so the model
 # rebuilt for in-notebook inference is byte-for-byte the same network the
@@ -134,7 +140,10 @@ def predict_labels(model, held_out, to_tensor):
             tensor = to_tensor(img).unsqueeze(0)
             logits = model(tensor)
             predicted_index = int(logits.argmax(dim=1))
-            predicted_label = TARGET_CLASSES[predicted_index]
+            # Map the logit index back to a label using the SAME ordering the
+            # model was trained with (ImageFolder's alphabetical class order),
+            # not the TARGET_CLASSES declaration order.
+            predicted_label = MODEL_INDEX_TO_LABEL[predicted_index]
             results.append((img, predicted_label, actual_label))
     return results
 
@@ -160,20 +169,29 @@ def show_prediction_grid(model, held_out, to_tensor):
     n = len(predictions)
     cols = 4
     rows = (n + cols - 1) // cols if n else 1
-    fig, axes = plt.subplots(rows, cols, figsize=(cols * 2, rows * 2))
+    # Give each tile more width and extra row height so the two-line title has
+    # room; the single-line "pred: X / actual: Y" title was wider than a 2-inch
+    # tile and overlapped its neighbors.
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 2.6, rows * 2.8))
 
     flat_axes = _flatten_axes(axes)
 
     for ax, (img, predicted_label, actual_label) in zip(flat_axes, predictions):
         ax.imshow(img)
-        ax.set_title(f"pred: {predicted_label} / actual: {actual_label}")
+        # Split the annotation across two lines and shrink the font so it fits
+        # within the tile width instead of running into adjacent titles.
+        ax.set_title(
+            f"pred: {predicted_label}\nactual: {actual_label}",
+            fontsize=9,
+        )
         ax.axis("off")
 
     # Turn off any unused axes so empty tiles are not drawn.
     for ax in flat_axes[n:]:
         ax.axis("off")
 
-    plt.tight_layout()
+    # Add explicit padding between subplots so titles never touch neighbors.
+    plt.tight_layout(pad=1.5, h_pad=2.0, w_pad=1.0)
     plt.show()
 
 
