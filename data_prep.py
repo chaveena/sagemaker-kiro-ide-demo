@@ -25,6 +25,13 @@ notebook and the property tests can import it. The core function,
 :func:`prepare_subset`, takes an injectable ``image_source`` abstraction so tests
 can supply a synthetic in-memory source and never touch the network; the
 notebook uses :func:`load_eurosat_source`, which is backed by torchvision.
+
+SAGEMAKER NOTE: there is no AWS code in this module. It matters to the SageMaker
+workflow only indirectly -- the ``ImageFolder`` directory tree it produces is
+what the notebook uploads to S3 and mounts into the training container as the
+``training`` input channel (surfaced to ``train.py`` as ``SM_CHANNEL_TRAINING``).
+Producing a standard on-disk layout here is what lets the remote job read the
+data with an ordinary ``torchvision.datasets.ImageFolder``.
 """
 
 import os

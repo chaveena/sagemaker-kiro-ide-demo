@@ -80,6 +80,13 @@ def load_trained_model(model_data_uri, download_fn, extract_dir="model"):
     This brings the managed training job's artifact back into the notebook
     purely for visualization; it does not alter the training job.
 
+    SAGEMAKER NOTE: ``model_data_uri`` is the S3 location of the ``model.tar.gz``
+    that SageMaker produced from the training container's ``SM_MODEL_DIR`` (see
+    ``train.py``). To keep this module free of any AWS dependency, the actual S3
+    download is *injected* as ``download_fn`` -- the notebook supplies a small
+    boto3-based downloader, while tests can pass a fake. Everything after the
+    download (untar, rebuild ``SmallCNN``, ``load_state_dict``) is plain PyTorch.
+
     Args:
         model_data_uri: The S3 URI of the ``model.tar.gz`` artifact (typically
             ``estimator.model_data``).

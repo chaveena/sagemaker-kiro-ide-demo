@@ -5,6 +5,13 @@ the outcome: on success, where the model artifact landed; on failure, the
 reason SageMaker gave. The reason-extraction logic is factored out here so it
 is directly unit-testable without any AWS access.
 
+SAGEMAKER NOTE: when a job finishes, you inspect it by calling
+``sagemaker.describe_training_job(TrainingJobName=...)`` (a boto3 / SageMaker
+API call the *notebook* makes). That returns a plain dict describing the job;
+if the job failed, the dict contains a human-readable ``"FailureReason"``.
+This module just reads fields out of that already-fetched dict -- so it needs
+no AWS access itself and is trivially unit-testable.
+
 Design constraint:
     Importing this module must NOT require ``boto3`` or ``sagemaker``. The
     notebook still performs the ``describe_training_job`` call (which needs

@@ -5,9 +5,38 @@ This script defines a small convolutional neural network that classifies
 (forest, water, cropland, urban). The model is trained from scratch with no
 pretrained weights.
 
-Additional pieces of the training entry point (command-line argument parsing,
-data loading, the training loop, and artifact saving) are added in later tasks
-and are intentionally not implemented here.
+-----------------------------------------------------------------------------
+NEW TO SAGEMAKER? READ THIS FIRST.
+-----------------------------------------------------------------------------
+Almost everything below is ordinary PyTorch. What makes this a *SageMaker*
+training script is a small contract between this file and the managed training
+container that SageMaker spins up on your behalf. You do not run this script
+yourself; SageMaker runs it inside a container on a separate machine, and it
+communicates with your code through **environment variables** and a
+**filesystem convention** -- not through any SageMaker Python API. That means
+this file has zero ``import sagemaker`` / ``import boto3``; it only reads a few
+env vars. The whole contract is:
+
+  1. INPUT DATA arrives as a "channel." When the notebook launches the job with
+     an input channel named ``training``, SageMaker downloads that data from S3
+     onto the container's disk and tells you where via the environment variable
+     ``SM_CHANNEL_TRAINING``. (A channel named ``foo`` -> ``SM_CHANNEL_FOO``.)
+
+  2. HYPERPARAMETERS arrive as COMMAND-LINE ARGUMENTS. The ``hyperparameters={...}``
+     dict passed to ``ModelTrainer`` in the notebook is handed to this script as
+     CLI flags (e.g. ``--epochs 3``), which is why we parse them with argparse.
+
+  3. THE MODEL OUTPUT goes in ``SM_MODEL_DIR``. Whatever you write into the
+     directory named by the ``SM_MODEL_DIR`` env var is automatically packaged
+     into ``model.tar.gz`` and uploaded to S3 when the job finishes. Writing
+     the weights anywhere else means they are lost.
+
+  4. LOGS are just stdout. Anything you ``print`` is captured into CloudWatch
+     Logs, so print statements are how you watch a remote job's progress.
+
+Everything else -- the model, the DataLoader, the training loop -- is exactly
+what you would write for local PyTorch training.
+-----------------------------------------------------------------------------
 """
 
 import argparse
@@ -54,12 +83,20 @@ def parse_args(argv=None):
     parser.add_argument(
         "--data-dir",
         type=str,
+        # SAGEMAKER: SM_CHANNEL_TRAINING is the on-disk path where SageMaker has
+        # placed the data from the "training" input channel (downloaded from S3
+        # before this script runs). Using it as the default means the script
+        # "just works" in the container, while still allowing a manual path
+        # (e.g. for a local test run) to override it.
         default=os.environ.get("SM_CHANNEL_TRAINING"),
         help="Input data path (defaults to the SM_CHANNEL_TRAINING env var).",
     )
     parser.add_argument(
         "--model-dir",
         type=str,
+        # SAGEMAKER: SM_MODEL_DIR is the directory SageMaker packages into
+        # model.tar.gz and uploads to S3 after training. Saving the weights here
+        # (see save()) is what makes the trained model persist beyond the job.
         default=os.environ.get("SM_MODEL_DIR"),
         help="Model output path (defaults to the SM_MODEL_DIR env var).",
     )
@@ -165,14 +202,23 @@ def train(model, loader, epochs):
             batches += 1
 
         avg_loss = running_loss / batches if batches else 0.0
+        # SAGEMAKER: stdout from the container is streamed to CloudWatch Logs,
+        # so a plain print is how per-epoch progress becomes visible for a
+        # remote job you are not running interactively.
         print(f"Epoch {epoch + 1}/{epochs} - average loss: {avg_loss:.4f}")
 
 
 def save(model, model_dir):
     """Save the trained model's weights to ``model_dir/model.pth``.
 
-    The directory is created if it does not already exist. SageMaker collects
-    the contents of the model directory into ``model.tar.gz`` after training.
+    The directory is created if it does not already exist.
+
+    SAGEMAKER: ``model_dir`` is ``SM_MODEL_DIR`` (see ``parse_args``). After the
+    script exits, SageMaker tars the *entire contents* of this directory into
+    ``model.tar.gz`` and uploads it to the job's S3 output location. Anything
+    saved elsewhere on the container disk is discarded when the job ends, so the
+    model must be written here to survive. This is standard PyTorch otherwise --
+    ``torch.save`` of a ``state_dict`` -- only the destination is special.
 
     Args:
         model: The trained model whose ``state_dict`` is saved.
