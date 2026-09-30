@@ -110,7 +110,7 @@ training job, S3 I/O) are marked `slow` and are skipped by default. Run them
 explicitly only when you intend to incur AWS usage:
 
 ```bash
-pytest -m slow
+pytest -m "slow"
 ```
 
 ## Generated artifacts
